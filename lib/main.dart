@@ -271,8 +271,3 @@ Widget _buildTaskColumn(BuildContext context, String status, TaskProvider taskPr
   );
 }
 }
-
-      ),
-    );
-  }
-}
