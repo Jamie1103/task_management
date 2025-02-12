@@ -23,12 +23,15 @@ class Task extends HiveObject {
   String status;
   @HiveField(3)
   DateTime createdAtTime;
+  @HiveField(4)
+  DateTime updatedAtTime;
 
   Task({
     required this.title,
     required this.description,
     this.status = 'To Do',
     required this.createdAtTime,
+    required this.updatedAtTime,
   });
 }
 
@@ -43,6 +46,7 @@ class TaskAdapter extends TypeAdapter<Task> {
       description: reader.readString(),
       status: reader.readString(),
       createdAtTime: DateTime.parse(reader.readString()),
+      updatedAtTime: DateTime.parse(reader.readString()),
     );
   }
 
@@ -52,6 +56,7 @@ class TaskAdapter extends TypeAdapter<Task> {
     writer.writeString(obj.description);
     writer.writeString(obj.status);
     writer.writeString(obj.createdAtTime.toIso8601String());
+    writer.writeString(obj.updatedAtTime.toIso8601String());
   }
 }
 
@@ -67,17 +72,7 @@ class TaskProvider with ChangeNotifier {
 
   Future<void> _initHive() async {
     _taskBox = Hive.box<Task>('tasksBox');
-    _cleanOldTasks();
     _loadTasks();
-  }
-
-  void _cleanOldTasks() {
-    // Remove tasks from previous day
-    for (var task in _taskBox.values.toList()) {
-      if (task.createdAtTime.day != DateTime.now().day) {
-        task.delete();
-      }
-    }
   }
 
   void _loadTasks() {
@@ -86,10 +81,12 @@ class TaskProvider with ChangeNotifier {
   }
 
   void addTask(String title, String description) {
+    final now = DateTime.now();
     final task = Task(
       title: title,
       description: description,
-      createdAtTime: DateTime.now(),
+      createdAtTime: now,
+      updatedAtTime: now,
     );
     _taskBox.add(task);
     _tasks.add(task);
@@ -101,6 +98,7 @@ class TaskProvider with ChangeNotifier {
     task.title = title;
     task.description = description;
     task.status = status;
+    task.updatedAtTime = DateTime.now();
     task.save();
     notifyListeners();
   }
@@ -110,6 +108,66 @@ class TaskProvider with ChangeNotifier {
     _tasks.removeAt(index);
     notifyListeners();
   }
+}
+
+void _showTaskDialog(BuildContext context, TaskProvider taskProvider, Task? task) {
+  final titleController = TextEditingController(text: task?.title);
+  final descController = TextEditingController(text: task?.description);
+  String status = task?.status ?? 'To Do';
+
+  showDialog(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text(task == null ? 'Add Task' : 'Edit Task'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: titleController, decoration: InputDecoration(labelText: 'Title')),
+                TextField(controller: descController, decoration: InputDecoration(labelText: 'Description')),
+                
+                DropdownButtonFormField<String>(
+                  value: status,
+                  decoration: InputDecoration(labelText: 'Status'),
+                  items: ['To Do', 'In Progress', 'Complete']
+                      .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() {
+                        status = value;
+                      });
+                    }
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(child: Text('Cancel'), onPressed: () => Navigator.pop(context)),
+              TextButton(
+                child: Text(task == null ? 'Add' : 'Update'),
+                onPressed: () {
+                  if (task == null) {
+                    taskProvider.addTask(titleController.text, descController.text);
+                  } else {
+                    taskProvider.updateTask(
+                      taskProvider.tasks.indexOf(task),
+                      titleController.text,
+                      descController.text,
+                      status,
+                    );
+                  }
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -130,108 +188,90 @@ class TaskScreen extends StatelessWidget {
     final taskProvider = Provider.of<TaskProvider>(context);
 
     return Scaffold(
-      appBar: AppBar(title: Text('Task Manager')),
-      body: ListView.builder(
-        itemCount: taskProvider.tasks.length,
-        itemBuilder: (context, index) {
-          final task = taskProvider.tasks[index];
-          return ListTile(
-            title: Text(task.title),
-            subtitle: Text(task.description),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButton<String>(
-                  value: task.status,
-                  onChanged: (value) {
-                    if (value != null) {
-                      taskProvider.updateTask(index, task.title, task.description, value);
-                    }
-                  },
-                  items: ['To Do', 'In Progress', 'Complete'].map((status) {
-                    return DropdownMenuItem(value: status, child: Text(status));
-                  }).toList(),
-                ),
-                IconButton(
-                  icon: Icon(Icons.edit, color: Colors.blue),
-                  onPressed: () {
-                    TextEditingController titleController = TextEditingController(text: task.title);
-                    TextEditingController descController = TextEditingController(text: task.description);
-
-                    showDialog(
-                      context: context,
-                      builder: (context) {
-                        return AlertDialog(
-                          title: Text('Edit Task'),
-                          content: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              TextField(controller: titleController, decoration: InputDecoration(labelText: 'Title')),
-                              TextField(controller: descController, decoration: InputDecoration(labelText: 'Description')),
-                            ],
-                          ),
-                          actions: [
-                            TextButton(
-                              child: Text('Cancel'),
-                              onPressed: () => Navigator.pop(context),
-                            ),
-                            TextButton(
-                              child: Text('Update'),
-                              onPressed: () {
-                                taskProvider.updateTask(index, titleController.text, descController.text, task.status);
-                                Navigator.pop(context);
-                              },
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: Icon(Icons.delete, color: Colors.red),
-                  onPressed: () => taskProvider.deleteTask(index),
-                ),
-              ],
-            ),
-          );
-        },
+      appBar: AppBar(title: Text('Task Management')),
+      body: Row(
+        children: [
+          Expanded(child: _buildTaskColumn(context, 'To Do', taskProvider, Colors.red[100]!)),
+          Expanded(child: _buildTaskColumn(context, 'In Progress', taskProvider, Colors.yellow[100]!)),
+          Expanded(child: _buildTaskColumn(context, 'Completed', taskProvider, Colors.green[100]!)),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         child: Icon(Icons.add),
-        onPressed: () {
-          showDialog(
-            context: context,
-            builder: (context) {
-              TextEditingController titleController = TextEditingController();
-              TextEditingController descController = TextEditingController();
+        onPressed: () => _showTaskDialog(context, taskProvider, null),
+      ),
+    );
+  }
+Widget _buildTaskColumn(BuildContext context, String status, TaskProvider taskProvider, Color color) {
+  List<Task> tasks = taskProvider.tasks.where((task) => task.status == status).toList();
 
-              return AlertDialog(
-                title: Text('Add Task'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(controller: titleController, decoration: InputDecoration(labelText: 'Title')),
-                    TextField(controller: descController, decoration: InputDecoration(labelText: 'Description')),
-                  ],
+  return Container(
+    color: color,
+    padding: EdgeInsets.all(8),
+    child: Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Center( // Ensures header is centered
+            child: Text(
+              status,
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: tasks.length,
+            itemBuilder: (context, index) {
+              final task = tasks[index];
+              return Card(
+                child: ListTile(
+                  title: Text(task.title),
+                  subtitle: Text(task.description),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButton<String>(
+                        value: task.status,
+                        onChanged: (value) {
+                          if (value != null) {
+                            taskProvider.updateTask(
+                              taskProvider.tasks.indexOf(task),
+                              task.title,
+                              task.description,
+                              value,
+                            );
+                          }
+                        },
+                        items: ['To Do', 'In Progress', 'Completed'].map((status) {
+                          return DropdownMenuItem(value: status, child: Text(status));
+                        }).toList(),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.edit, color: Colors.blue),
+                        onPressed: () {
+                          _showTaskDialog(context, taskProvider, task);
+                        },
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete, color: Colors.red),
+                        onPressed: () {
+                          taskProvider.deleteTask(taskProvider.tasks.indexOf(task));
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-                actions: [
-                  TextButton(
-                    child: Text('Cancel'),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  TextButton(
-                    child: Text('Add'),
-                    onPressed: () {
-                      taskProvider.addTask(titleController.text, descController.text);
-                      Navigator.pop(context);
-                    },
-                  ),
-                ],
               );
             },
-          );
-        },
+          ),
+        ),
+      ],
+    ),
+  );
+}
+}
+
       ),
     );
   }
